@@ -1,0 +1,953 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>スタイリッシュ・リバーシ</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Phosphor Icons CDN -->
+  <script src="https://unpkg.com/@phosphor-icons/web"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Noto+Sans+JP:wght@400;600;700&display=swap');
+
+    body {
+      font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* 盤面のフェルト質感テクスチャ */
+    .felt-board {
+      background: radial-gradient(circle at 50% 50%, #15803d 0%, #14532d 100%);
+      box-shadow: 
+        inset 0 4px 12px rgba(0, 0, 0, 0.6),
+        0 20px 25px -5px rgba(0, 0, 0, 0.4),
+        0 10px 10px -5px rgba(0, 0, 0, 0.2);
+    }
+
+    /* 石の3D裏返しアニメーション */
+    .disc-container {
+      perspective: 800px;
+    }
+
+    .disc {
+      position: relative;
+      width: 86%;
+      height: 86%;
+      border-radius: 50%;
+      transform-style: preserve-3d;
+      transition: transform 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .disc.flip-to-white {
+      transform: rotateY(180deg);
+    }
+
+    .disc.flip-to-black {
+      transform: rotateY(0deg);
+    }
+
+    /* 石の表面（表裏） */
+    .disc-face {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      backface-visibility: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 黒石 */
+    .disc-black {
+      background: radial-gradient(circle at 35% 35%, #475569 0%, #1e293b 45%, #090d16 100%);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5), inset 0 1px 2px rgba(255, 255, 255, 0.25);
+    }
+
+    /* 白石 */
+    .disc-white {
+      background: radial-gradient(circle at 35% 35%, #ffffff 0%, #f1f5f9 60%, #cbd5e1 100%);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.35), inset 0 -2px 3px rgba(0, 0, 0, 0.15);
+      transform: rotateY(180deg);
+    }
+
+    /* 新しく置かれたマーク */
+    .latest-marker {
+      width: 28%;
+      height: 28%;
+      border-radius: 50%;
+      animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+
+    @keyframes pulse-ring {
+      0%, 100% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.25); opacity: 0.4; }
+    }
+
+    /* ガイドドット（着手可能マス）のアニメーション */
+    .valid-hint {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .valid-hint:hover {
+      transform: scale(1.4);
+      background-color: rgba(253, 224, 71, 0.85);
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between selection:bg-emerald-500 selection:text-white">
+
+  <!-- ヘッダー -->
+  <header class="w-full px-4 py-3 flex items-center justify-between border-b border-slate-800/80 bg-slate-900/60 backdrop-blur-md sticky top-0 z-20">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-950/40">
+        <i class="ph-bold ph-circles-four text-white text-xl"></i>
+      </div>
+      <div>
+        <h1 class="font-extrabold text-lg sm:text-xl tracking-tight leading-none bg-gradient-to-r from-emerald-400 to-teal-200 bg-clip-text text-transparent">REVERSI</h1>
+        <p class="text-[11px] text-slate-400 leading-tight">Authentic Classic Board Game</p>
+      </div>
+    </div>
+
+    <!-- コントロールボタン群 -->
+    <div class="flex items-center gap-2">
+      <button id="btn-sound" title="サウンド切替" class="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition-colors">
+        <i id="sound-icon" class="ph-bold ph-speaker-high text-lg"></i>
+      </button>
+      <button id="btn-undo" title="待った (1手戻す)" class="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs tracking-wider transition-all disabled:opacity-40 disabled:cursor-not-allowed">
+        <i class="ph-bold ph-arrow-counter-clockwise text-sm"></i>
+        <span class="hidden sm:inline">一手戻す</span>
+      </button>
+      <button id="btn-new-game" class="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs tracking-wider transition-all shadow-md shadow-emerald-900/30">
+        <i class="ph-bold ph-arrows-clockwise text-sm"></i>
+        <span>対局開始</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ -->
+  <main class="flex-1 flex flex-col items-center justify-center p-3 sm:p-5 max-w-4xl mx-auto w-full">
+    
+    <!-- スコアボード & ターン表示 -->
+    <div class="w-full max-w-lg mb-3.5 flex flex-col gap-2.5">
+      
+      <!-- 対局ステータスカード -->
+      <div class="grid grid-cols-2 gap-3">
+        <!-- 黒プレイヤー -->
+        <div id="player-black-card" class="relative overflow-hidden p-3 rounded-2xl border-2 transition-all duration-300 bg-slate-900/90 border-emerald-500 shadow-lg shadow-emerald-950/20">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-full bg-slate-900 border border-slate-700 shadow-inner flex items-center justify-center">
+                <div class="w-6 h-6 rounded-full bg-gradient-to-tr from-slate-950 to-slate-700 border border-slate-600"></div>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-400 flex items-center gap-1">
+                  <span>先手・黒</span>
+                  <span id="black-role-badge" class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">YOU</span>
+                </div>
+                <div id="black-turn-indicator" class="text-xs font-semibold text-emerald-400 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span> 手番中
+                </div>
+              </div>
+            </div>
+            <div id="score-black" class="text-3xl font-black text-white tracking-tighter">2</div>
+          </div>
+        </div>
+
+        <!-- 白プレイヤー -->
+        <div id="player-white-card" class="relative overflow-hidden p-3 rounded-2xl border-2 transition-all duration-300 bg-slate-900/60 border-slate-800 opacity-70">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 shadow flex items-center justify-center">
+                <div class="w-6 h-6 rounded-full bg-gradient-to-tr from-slate-200 to-white"></div>
+              </div>
+              <div>
+                <div class="text-xs font-bold text-slate-400 flex items-center gap-1">
+                  <span>後手・白</span>
+                  <span id="white-role-badge" class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-900/60 text-indigo-300">AI</span>
+                </div>
+                <div id="white-turn-indicator" class="text-xs font-semibold text-slate-500 hidden items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping"></span> 思考中...
+                </div>
+              </div>
+            </div>
+            <div id="score-white" class="text-3xl font-black text-white tracking-tighter">2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 形勢バー -->
+      <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden flex border border-slate-700/60">
+        <div id="bar-black" class="bg-gradient-to-r from-emerald-600 to-slate-900 transition-all duration-500 h-full" style="width: 50%;"></div>
+        <div id="bar-white" class="bg-gradient-to-r from-slate-200 to-indigo-200 transition-all duration-500 h-full" style="width: 50%;"></div>
+      </div>
+    </div>
+
+    <!-- 盤面エリア -->
+    <div class="relative w-full max-w-[440px] aspect-square p-2.5 sm:p-3.5 bg-amber-950/80 rounded-2xl sm:rounded-3xl shadow-2xl border-4 border-amber-900/70">
+      <!-- 枠線の装飾フレーム -->
+      <div class="felt-board w-full h-full rounded-xl sm:rounded-2xl grid grid-cols-8 grid-rows-8 gap-[3px] sm:gap-[4px] p-[3px] sm:p-[4px] relative">
+        
+        <!-- 盤面の星（4箇所の目印ドット） -->
+        <div class="absolute w-2 h-2 rounded-full bg-black/40 pointer-events-none" style="top: calc(25% - 4px); left: calc(25% - 4px);"></div>
+        <div class="absolute w-2 h-2 rounded-full bg-black/40 pointer-events-none" style="top: calc(25% - 4px); left: calc(75% - 4px);"></div>
+        <div class="absolute w-2 h-2 rounded-full bg-black/40 pointer-events-none" style="top: calc(75% - 4px); left: calc(25% - 4px);"></div>
+        <div class="absolute w-2 h-2 rounded-full bg-black/40 pointer-events-none" style="top: calc(75% - 4px); left: calc(75% - 4px);"></div>
+
+        <!-- 64マスがJSでここに動的生成されます -->
+        <div id="board-cells" class="contents"></div>
+      </div>
+
+      <!-- パス・通知オーバーレイバナー -->
+      <div id="notice-toast" class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-900/95 backdrop-blur-md border border-slate-700 px-6 py-3 rounded-2xl shadow-2xl transition-all duration-300 opacity-0 pointer-events-none scale-90 z-30 flex items-center gap-2">
+        <i id="notice-icon" class="ph-fill ph-info text-yellow-400 text-xl"></i>
+        <span id="notice-text" class="text-sm font-bold tracking-wide">パスしました</span>
+      </div>
+    </div>
+
+    <!-- 設定パネル (モード & レベル選択) -->
+    <div class="w-full max-w-lg mt-3 bg-slate-900/70 border border-slate-800 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div class="flex items-center gap-2">
+        <span class="text-slate-400 font-semibold flex items-center gap-1">
+          <i class="ph-bold ph-game-controller text-sm"></i> モード:
+        </span>
+        <div class="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+          <button id="mode-pve" class="px-2.5 py-1 rounded-md font-bold transition-colors bg-emerald-600 text-white shadow">vs AI</button>
+          <button id="mode-pvp" class="px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400 hover:text-slate-200">2人対戦</button>
+        </div>
+      </div>
+
+      <div id="ai-difficulty-wrapper" class="flex items-center gap-2">
+        <span class="text-slate-400 font-semibold flex items-center gap-1">
+          <i class="ph-bold ph-brain text-sm"></i> 強さ:
+        </span>
+        <div class="flex bg-slate-800 p-0.5 rounded-lg border border-slate-700">
+          <button data-level="1" class="ai-lvl-btn px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400">初級</button>
+          <button data-level="2" class="ai-lvl-btn px-2.5 py-1 rounded-md font-bold transition-colors bg-emerald-600 text-white shadow">中級</button>
+          <button data-level="3" class="ai-lvl-btn px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400">上級</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- 対局結果モーダル -->
+  <div id="game-over-modal" class="fixed inset-0 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 z-50 transition-opacity duration-300 opacity-0 pointer-events-none">
+    <div class="bg-gradient-to-b from-slate-900 to-slate-950 border border-slate-800 p-6 sm:p-8 rounded-3xl max-w-sm w-full text-center shadow-2xl transform scale-95 transition-transform duration-300" id="game-over-content">
+      <div id="modal-trophy" class="w-16 h-16 mx-auto rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center text-3xl mb-4">
+        <i class="ph-fill ph-trophy"></i>
+      </div>
+      <h2 id="modal-title" class="text-2xl font-black tracking-tight text-white mb-1">黒の勝利！</h2>
+      <p id="modal-subtitle" class="text-xs text-slate-400 mb-6">接戦を制しました</p>
+
+      <!-- 最終結果スコア -->
+      <div class="grid grid-cols-2 gap-3 mb-6 bg-slate-800/40 p-3 rounded-2xl border border-slate-800">
+        <div class="flex flex-col items-center">
+          <span class="text-xs font-semibold text-slate-400 mb-1">黒 (あなた)</span>
+          <span id="modal-score-black" class="text-3xl font-black text-emerald-400">0</span>
+        </div>
+        <div class="flex flex-col items-center border-l border-slate-700/60">
+          <span class="text-xs font-semibold text-slate-400 mb-1">白 (相手)</span>
+          <span id="modal-score-white" class="text-3xl font-black text-indigo-300">0</span>
+        </div>
+      </div>
+
+      <button id="modal-restart-btn" class="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 active:scale-95 text-white font-extrabold text-sm tracking-wider transition-all shadow-lg shadow-emerald-950/40">
+        もう一度プレイする
+      </button>
+    </div>
+  </div>
+
+  <!-- フッター -->
+  <footer class="w-full py-3 text-center text-slate-600 text-xs border-t border-slate-900">
+    Reversi Web Edition &bull; Strategic 8x8 Board Game
+  </footer>
+
+  <script>
+    /* =========================================================
+       定数およびゲーム状態
+    ========================================================= */
+    const EMPTY = 0;
+    const BLACK = 1;
+    const WHITE = -1;
+
+    // 8方向のベクトル (上, 右上, 右, 右下, 下, 左下, 左, 左上)
+    const DIRECTIONS = [
+      [-1,  0], [-1,  1], [0,  1], [1,  1],
+      [ 1,  0], [ 1, -1], [0, -1], [-1, -1]
+    ];
+
+    // マスの位置価値テーブル (AI評価用)
+    const POSITION_WEIGHTS = [
+      [ 120, -25,  20,   5,   5,  20, -25, 120],
+      [ -25, -45,  -5,  -5,  -5,  -5, -45, -25],
+      [  20,  -5,  15,   3,   3,  15,  -5,  20],
+      [   5,  -5,   3,   3,   3,   3,  -5,   5],
+      [   5,  -5,   3,   3,   3,   3,  -5,   5],
+      [  20,  -5,  15,   3,   3,  15,  -5,  20],
+      [ -25, -45,  -5,  -5,  -5,  -5, -45, -25],
+      [ 120, -25,  20,   5,   5,  20, -25, 120]
+    ];
+
+    let board = Array(8).fill(null).map(() => Array(8).fill(EMPTY));
+    let turn = BLACK;
+    let history = []; // アンドゥ用スタック
+    let isGameOver = false;
+    let isAiThinking = false;
+    let gameMode = 'pve'; // 'pve' or 'pvp'
+    let aiDifficulty = 2; // 1: 初級, 2: 中級, 3: 上級
+    let soundEnabled = true;
+    let lastMove = null;
+
+    /* =========================================================
+       Web Audio API によるサウンドエフェクト
+    ========================================================= */
+    let audioCtx = null;
+    function getAudioContext() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function playSound(type) {
+      if (!soundEnabled) return;
+      try {
+        const ctx = getAudioContext();
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        if (type === 'place') {
+          // 石を置く「パチッ」という音
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.exponentialRampToValueAtTime(120, now + 0.08);
+          gain.gain.setValueAtTime(0.4, now);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+          osc.start(now);
+          osc.stop(now + 0.08);
+        } else if (type === 'flip') {
+          // 連続してめくれる時の軽快な音
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(600 + Math.random() * 80, now);
+          osc.frequency.exponentialRampToValueAtTime(300, now + 0.05);
+          gain.gain.setValueAtTime(0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.005, now + 0.05);
+          osc.start(now);
+          osc.stop(now + 0.05);
+        } else if (type === 'pass') {
+          // パス警告音
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(320, now);
+          osc.frequency.setValueAtTime(240, now + 0.1);
+          gain.gain.setValueAtTime(0.15, now);
+          gain.gain.linearRampToValueAtTime(0.01, now + 0.25);
+          osc.start(now);
+          osc.stop(now + 0.25);
+        } else if (type === 'win') {
+          // ファンファーレ
+          const notes = [523.25, 659.25, 783.99, 1046.50];
+          notes.forEach((freq, idx) => {
+            const nOsc = ctx.createOscillator();
+            const nGain = ctx.createGain();
+            nOsc.type = 'triangle';
+            nOsc.frequency.setValueAtTime(freq, now + idx * 0.1);
+            nGain.gain.setValueAtTime(0.2, now + idx * 0.1);
+            nGain.gain.exponentialRampToValueAtTime(0.01, now + idx * 0.1 + 0.35);
+            nOsc.connect(nGain);
+            nGain.connect(ctx.destination);
+            nOsc.start(now + idx * 0.1);
+            nOsc.stop(now + idx * 0.1 + 0.35);
+          });
+        }
+      } catch (e) {
+        console.warn('Audio play failed:', e);
+      }
+    }
+
+    /* =========================================================
+       DOM 要素の参照取得
+    ========================================================= */
+    const boardCellsContainer = document.getElementById('board-cells');
+    const scoreBlackElem = document.getElementById('score-black');
+    const scoreWhiteElem = document.getElementById('score-white');
+    const barBlackElem = document.getElementById('bar-black');
+    const barWhiteElem = document.getElementById('bar-white');
+    const cardBlackElem = document.getElementById('player-black-card');
+    const cardWhiteElem = document.getElementById('player-white-card');
+    const blackIndicatorElem = document.getElementById('black-turn-indicator');
+    const whiteIndicatorElem = document.getElementById('white-turn-indicator');
+    const blackBadgeElem = document.getElementById('black-role-badge');
+    const whiteBadgeElem = document.getElementById('white-role-badge');
+    const noticeToast = document.getElementById('notice-toast');
+    const noticeText = document.getElementById('notice-text');
+    const btnUndo = document.getElementById('btn-undo');
+    const btnNewGame = document.getElementById('btn-new-game');
+    const btnSound = document.getElementById('btn-sound');
+    const soundIcon = document.getElementById('sound-icon');
+    const modePveBtn = document.getElementById('mode-pve');
+    const modePvpBtn = document.getElementById('mode-pvp');
+    const aiDifficultyWrapper = document.getElementById('ai-difficulty-wrapper');
+    const aiLvlButtons = document.querySelectorAll('.ai-lvl-btn');
+    const gameOverModal = document.getElementById('game-over-modal');
+    const gameOverContent = document.getElementById('game-over-content');
+    const modalRestartBtn = document.getElementById('modal-restart-btn');
+    const modalTitle = document.getElementById('modal-title');
+    const modalSubtitle = document.getElementById('modal-subtitle');
+    const modalScoreBlack = document.getElementById('modal-score-black');
+    const modalScoreWhite = document.getElementById('modal-score-white');
+
+    /* =========================================================
+       初期化 & 盤面作成
+    ========================================================= */
+    function initBoard() {
+      boardCellsContainer.innerHTML = '';
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'relative flex items-center justify-center rounded-md bg-emerald-800/40 hover:bg-emerald-700/40 transition-colors cursor-pointer';
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+          
+          cell.addEventListener('click', () => handleCellClick(r, c));
+          boardCellsContainer.appendChild(cell);
+        }
+      }
+      resetGame();
+    }
+
+    function resetGame() {
+      board = Array(8).fill(null).map(() => Array(8).fill(EMPTY));
+      // 初期4石の配置
+      board[3][3] = WHITE;
+      board[3][4] = BLACK;
+      board[4][3] = BLACK;
+      board[4][4] = WHITE;
+
+      turn = BLACK;
+      history = [];
+      isGameOver = false;
+      isAiThinking = false;
+      lastMove = null;
+
+      hideModal();
+      updateView();
+    }
+
+    /* =========================================================
+       リバーシルールロジック
+    ========================================================= */
+    function isValidCoordinate(r, c) {
+      return r >= 0 && r < 8 && c >= 0 && c < 8;
+    }
+
+    // 特定のマスに置いたとき裏返せる相手の石リストを返す
+    function getFlippableDiscs(currentBoard, r, c, player) {
+      if (currentBoard[r][c] !== EMPTY) return [];
+      const opponent = -player;
+      let flippable = [];
+
+      for (const [dr, dc] of DIRECTIONS) {
+        let curR = r + dr;
+        let curC = c + dc;
+        let ray = [];
+
+        while (isValidCoordinate(curR, curC) && currentBoard[curR][curC] === opponent) {
+          ray.push([curR, curC]);
+          curR += dr;
+          curC += dc;
+        }
+
+        if (ray.length > 0 && isValidCoordinate(curR, curC) && currentBoard[curR][curC] === player) {
+          flippable.push(...ray);
+        }
+      }
+
+      return flippable;
+    }
+
+    // 置くことができる全手のリストを取得
+    function getValidMoves(currentBoard, player) {
+      let moves = [];
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const flips = getFlippableDiscs(currentBoard, r, c, player);
+          if (flips.length > 0) {
+            moves.push({ r, c, flips });
+          }
+        }
+      }
+      return moves;
+    }
+
+    // 盤面上の石をカウント
+    function getPieceCounts(currentBoard = board) {
+      let black = 0;
+      let white = 0;
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          if (currentBoard[r][c] === BLACK) black++;
+          else if (currentBoard[r][c] === WHITE) white++;
+        }
+      }
+      return { black, white };
+    }
+
+    /* =========================================================
+       着手処理
+    ========================================================= */
+    function makeMove(r, c, flips, isAi = false) {
+      // 履歴に保存 (アンドゥ用)
+      saveHistory();
+
+      board[r][c] = turn;
+      lastMove = { r, c };
+
+      playSound('place');
+
+      // ひっくり返し処理（少し時間差をつけて心地よい演出）
+      flips.forEach(([fr, fc], index) => {
+        setTimeout(() => {
+          board[fr][fc] = turn;
+          updateDiscAppearance(fr, fc, turn);
+          playSound('flip');
+        }, (index + 1) * 60);
+      });
+
+      // ターン交代と判定
+      setTimeout(() => {
+        proceedNextTurn();
+      }, flips.length * 60 + 120);
+    }
+
+    function proceedNextTurn() {
+      const nextPlayer = -turn;
+      const nextMoves = getValidMoves(board, nextPlayer);
+
+      if (nextMoves.length > 0) {
+        // 次のプレイヤーが打てる手がある場合
+        turn = nextPlayer;
+        updateView();
+        checkAndTriggerAi();
+      } else {
+        // 次のプレイヤーが打てない -> パス判定
+        const currentMoves = getValidMoves(board, turn);
+        if (currentMoves.length > 0) {
+          // 相手がパス、手番がそのまま継続
+          showNotification(nextPlayer === BLACK ? '黒はパスしました' : '白はパスしました');
+          playSound('pass');
+          updateView();
+          checkAndTriggerAi();
+        } else {
+          // 両者ともに打てない -> 終局
+          endGame();
+        }
+      }
+    }
+
+    function checkAndTriggerAi() {
+      if (gameMode === 'pve' && turn === WHITE && !isGameOver) {
+        isAiThinking = true;
+        updateStatusCards();
+        // 人間味のある思考ディレイ
+        const delay = aiDifficulty === 1 ? 550 : aiDifficulty === 2 ? 750 : 900;
+        setTimeout(() => {
+          if (turn === WHITE && !isGameOver) {
+            executeAiMove();
+          }
+        }, delay);
+      }
+    }
+
+    function handleCellClick(r, c) {
+      if (isGameOver || isAiThinking) return;
+      if (gameMode === 'pve' && turn === WHITE) return;
+
+      const flips = getFlippableDiscs(board, r, c, turn);
+      if (flips.length > 0) {
+        makeMove(r, c, flips, false);
+      }
+    }
+
+    /* =========================================================
+       AI ロジック (Minimax / Alpha-Beta Pruning)
+    ========================================================= */
+    function executeAiMove() {
+      const validMoves = getValidMoves(board, WHITE);
+      if (validMoves.length === 0) {
+        isAiThinking = false;
+        proceedNextTurn();
+        return;
+      }
+
+      let selectedMove = null;
+
+      if (aiDifficulty === 1) {
+        // 初級: ランダム性強め（ときどき角を優先）
+        const corners = validMoves.filter(m => (m.r === 0 || m.r === 7) && (m.c === 0 || m.c === 7));
+        if (corners.length > 0 && Math.random() < 0.7) {
+          selectedMove = corners[Math.floor(Math.random() * corners.length)];
+        } else {
+          selectedMove = validMoves[Math.floor(Math.random() * validMoves.length)];
+        }
+      } else if (aiDifficulty === 2) {
+        // 中級: 1手先の位置評価値 + 取れる石数で最善手を判定
+        let bestScore = -Infinity;
+        for (const move of validMoves) {
+          let score = POSITION_WEIGHTS[move.r][move.c] + (move.flips.length * 2);
+          if (score > bestScore) {
+            bestScore = score;
+            selectedMove = move;
+          }
+        }
+      } else {
+        // 上級: 探索深度4のMinimax + アルファベータ枝刈り
+        let bestVal = -Infinity;
+        for (const move of validMoves) {
+          const nextBoard = simulateMove(board, move.r, move.c, move.flips, WHITE);
+          const val = minimax(nextBoard, 3, -Infinity, Infinity, false);
+          if (val > bestVal) {
+            bestVal = val;
+            selectedMove = move;
+          }
+        }
+      }
+
+      isAiThinking = false;
+      if (selectedMove) {
+        makeMove(selectedMove.r, selectedMove.c, selectedMove.flips, true);
+      }
+    }
+
+    function simulateMove(currentBoard, r, c, flips, player) {
+      const b = currentBoard.map(row => [...row]);
+      b[r][c] = player;
+      flips.forEach(([fr, fc]) => {
+        b[fr][fc] = player;
+      });
+      return b;
+    }
+
+    function evaluateBoard(currentBoard) {
+      let score = 0;
+      let myDiscs = 0;
+      let oppDiscs = 0;
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const piece = currentBoard[r][c];
+          if (piece === WHITE) {
+            myDiscs++;
+            score += POSITION_WEIGHTS[r][c];
+          } else if (piece === BLACK) {
+            oppDiscs++;
+            score -= POSITION_WEIGHTS[r][c];
+          }
+        }
+      }
+
+      // 着手可能手数の多さ（モビリティ）も評価
+      const myMoves = getValidMoves(currentBoard, WHITE).length;
+      const oppMoves = getValidMoves(currentBoard, BLACK).length;
+      score += (myMoves - oppMoves) * 12;
+
+      // 終盤は純粋な石の数を重視
+      if (myDiscs + oppDiscs > 52) {
+        score += (myDiscs - oppDiscs) * 15;
+      }
+
+      return score;
+    }
+
+    function minimax(currentBoard, depth, alpha, beta, isMaximizing) {
+      const player = isMaximizing ? WHITE : BLACK;
+      const moves = getValidMoves(currentBoard, player);
+
+      if (depth === 0 || moves.length === 0) {
+        return evaluateBoard(currentBoard);
+      }
+
+      if (isMaximizing) {
+        let maxEval = -Infinity;
+        for (const move of moves) {
+          const simulated = simulateMove(currentBoard, move.r, move.c, move.flips, WHITE);
+          const ev = minimax(simulated, depth - 1, alpha, beta, false);
+          maxEval = Math.max(maxEval, ev);
+          alpha = Math.max(alpha, ev);
+          if (beta <= alpha) break;
+        }
+        return maxEval;
+      } else {
+        let minEval = Infinity;
+        for (const move of moves) {
+          const simulated = simulateMove(currentBoard, move.r, move.c, move.flips, BLACK);
+          const ev = minimax(simulated, depth - 1, alpha, beta, true);
+          minEval = Math.min(minEval, ev);
+          beta = Math.min(beta, ev);
+          if (beta <= alpha) break;
+        }
+        return minEval;
+      }
+    }
+
+    /* =========================================================
+       アンドゥ（待った機能）
+    ========================================================= */
+    function saveHistory() {
+      history.push({
+        board: board.map(r => [...r]),
+        turn: turn,
+        lastMove: lastMove ? { ...lastMove } : null
+      });
+      // 履歴上限
+      if (history.length > 50) history.shift();
+      btnUndo.disabled = false;
+    }
+
+    function undoMove() {
+      if (history.length === 0 || isAiThinking) return;
+
+      if (gameMode === 'pve') {
+        // AI対戦時は、AIと自分の手番をセットで2手戻す
+        let targetState = history.pop();
+        if (targetState.turn !== BLACK && history.length > 0) {
+          targetState = history.pop();
+        }
+        restoreState(targetState);
+      } else {
+        const targetState = history.pop();
+        restoreState(targetState);
+      }
+
+      if (history.length === 0) {
+        btnUndo.disabled = true;
+      }
+      playSound('flip');
+      updateView();
+    }
+
+    function restoreState(state) {
+      board = state.board.map(r => [...r]);
+      turn = state.turn;
+      lastMove = state.lastMove;
+      isGameOver = false;
+      hideModal();
+    }
+
+    /* =========================================================
+       UI 更新およびレンダリング
+    ========================================================= */
+    function updateView() {
+      const validMoves = (!isGameOver && (!isAiThinking || gameMode === 'pvp')) 
+        ? getValidMoves(board, turn) 
+        : [];
+      const validMap = new Map();
+      validMoves.forEach(m => validMap.set(`${m.r}-${m.c}`, m));
+
+      // 各マスの描画更新
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const cell = boardCellsContainer.children[r * 8 + c];
+          const val = board[r][c];
+          const isLatest = lastMove && lastMove.r === r && lastMove.c === c;
+
+          // 内部クリア
+          cell.innerHTML = '';
+
+          if (val !== EMPTY) {
+            // 石を配置
+            const discWrap = document.createElement('div');
+            discWrap.className = 'disc-container w-full h-full flex items-center justify-center';
+
+            const disc = document.createElement('div');
+            disc.className = `disc ${val === WHITE ? 'flip-to-white' : 'flip-to-black'}`;
+
+            const blackFace = document.createElement('div');
+            blackFace.className = 'disc-face disc-black';
+
+            const whiteFace = document.createElement('div');
+            whiteFace.className = 'disc-face disc-white';
+
+            // 最後に打った手マーク
+            if (isLatest) {
+              const marker = document.createElement('div');
+              marker.className = `latest-marker ${val === BLACK ? 'bg-amber-400' : 'bg-emerald-500'}`;
+              (val === BLACK ? blackFace : whiteFace).appendChild(marker);
+            }
+
+            disc.appendChild(blackFace);
+            disc.appendChild(whiteFace);
+            discWrap.appendChild(disc);
+            cell.appendChild(discWrap);
+          } else if (validMap.has(`${r}-${c}`) && !(gameMode === 'pve' && turn === WHITE)) {
+            // 着手可能ガイドドット
+            const hint = document.createElement('div');
+            hint.className = 'valid-hint w-3.5 h-3.5 sm:w-4 sm:h-4 rounded-full bg-emerald-400/40 border border-emerald-300/60 shadow-sm pointer-events-none';
+            cell.appendChild(hint);
+          }
+        }
+      }
+
+      updateStatusCards();
+      btnUndo.disabled = history.length === 0 || isAiThinking;
+    }
+
+    function updateDiscAppearance(r, c, newTurn) {
+      const cell = boardCellsContainer.children[r * 8 + c];
+      const disc = cell.querySelector('.disc');
+      if (disc) {
+        if (newTurn === WHITE) {
+          disc.classList.remove('flip-to-black');
+          disc.classList.add('flip-to-white');
+        } else {
+          disc.classList.remove('flip-to-white');
+          disc.classList.add('flip-to-black');
+        }
+      }
+    }
+
+    function updateStatusCards() {
+      const counts = getPieceCounts(board);
+      scoreBlackElem.textContent = counts.black;
+      scoreWhiteElem.textContent = counts.white;
+
+      // 割合バーの計算
+      const total = counts.black + counts.white;
+      const blackPct = total > 0 ? (counts.black / total) * 100 : 50;
+      const whitePct = 100 - blackPct;
+      barBlackElem.style.width = `${blackPct}%`;
+      barWhiteElem.style.width = `${whitePct}%`;
+
+      // 枠線とアクティブ状態
+      if (turn === BLACK) {
+        cardBlackElem.classList.remove('opacity-70', 'border-slate-800');
+        cardBlackElem.classList.add('border-emerald-500', 'shadow-lg');
+        blackIndicatorElem.classList.remove('hidden');
+        blackIndicatorElem.classList.add('flex');
+
+        cardWhiteElem.classList.add('opacity-70', 'border-slate-800');
+        cardWhiteElem.classList.remove('border-indigo-500', 'shadow-lg');
+        whiteIndicatorElem.classList.add('hidden');
+        whiteIndicatorElem.classList.remove('flex');
+      } else {
+        cardWhiteElem.classList.remove('opacity-70', 'border-slate-800');
+        cardWhiteElem.classList.add('border-indigo-500', 'shadow-lg');
+        whiteIndicatorElem.classList.remove('hidden');
+        whiteIndicatorElem.classList.add('flex');
+
+        cardBlackElem.classList.add('opacity-70', 'border-slate-800');
+        cardBlackElem.classList.remove('border-emerald-500', 'shadow-lg');
+        blackIndicatorElem.classList.add('hidden');
+        blackIndicatorElem.classList.remove('flex');
+      }
+    }
+
+    function showNotification(msg) {
+      noticeText.textContent = msg;
+      noticeToast.classList.remove('opacity-0', 'scale-90', 'pointer-events-none');
+      noticeToast.classList.add('opacity-100', 'scale-100');
+
+      setTimeout(() => {
+        noticeToast.classList.remove('opacity-100', 'scale-100');
+        noticeToast.classList.add('opacity-0', 'scale-90', 'pointer-events-none');
+      }, 1500);
+    }
+
+    /* =========================================================
+       ゲーム終了判定 & リザルト
+    ========================================================= */
+    function endGame() {
+      isGameOver = true;
+      const counts = getPieceCounts(board);
+      modalScoreBlack.textContent = counts.black;
+      modalScoreWhite.textContent = counts.white;
+
+      if (counts.black > counts.white) {
+        modalTitle.textContent = gameMode === 'pve' ? 'あなたの勝利！' : '黒の勝利！';
+        modalSubtitle.textContent = `${counts.black} 対 ${counts.white} で圧倒しました`;
+        playSound('win');
+      } else if (counts.white > counts.black) {
+        modalTitle.textContent = gameMode === 'pve' ? 'AIの勝利！' : '白の勝利！';
+        modalSubtitle.textContent = `${counts.white} 対 ${counts.black} で相手の勝ちです`;
+      } else {
+        modalTitle.textContent = '引き分け！';
+        modalSubtitle.textContent = `両者一歩も譲らず 32 対 32 のドロー`;
+      }
+
+      setTimeout(() => {
+        showModal();
+      }, 600);
+    }
+
+    function showModal() {
+      gameOverModal.classList.remove('opacity-0', 'pointer-events-none');
+      gameOverContent.classList.remove('scale-95');
+      gameOverContent.classList.add('scale-100');
+    }
+
+    function hideModal() {
+      gameOverModal.classList.add('opacity-0', 'pointer-events-none');
+      gameOverContent.classList.remove('scale-100');
+      gameOverContent.classList.add('scale-95');
+    }
+
+    /* =========================================================
+       イベントリスナー設定
+    ========================================================= */
+    btnNewGame.addEventListener('click', resetGame);
+    modalRestartBtn.addEventListener('click', resetGame);
+    btnUndo.addEventListener('click', undoMove);
+
+    btnSound.addEventListener('click', () => {
+      soundEnabled = !soundEnabled;
+      if (soundEnabled) {
+        soundIcon.className = 'ph-bold ph-speaker-high text-lg';
+      } else {
+        soundIcon.className = 'ph-bold ph-speaker-simple-slash text-lg text-slate-500';
+      }
+    });
+
+    modePveBtn.addEventListener('click', () => {
+      gameMode = 'pve';
+      modePveBtn.className = 'px-2.5 py-1 rounded-md font-bold transition-colors bg-emerald-600 text-white shadow';
+      modePvpBtn.className = 'px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400 hover:text-slate-200';
+      aiDifficultyWrapper.classList.remove('hidden');
+      blackBadgeElem.textContent = 'YOU';
+      whiteBadgeElem.textContent = 'AI';
+      resetGame();
+    });
+
+    modePvpBtn.addEventListener('click', () => {
+      gameMode = 'pvp';
+      modePvpBtn.className = 'px-2.5 py-1 rounded-md font-bold transition-colors bg-emerald-600 text-white shadow';
+      modePveBtn.className = 'px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400 hover:text-slate-200';
+      aiDifficultyWrapper.classList.add('hidden');
+      blackBadgeElem.textContent = '1P';
+      whiteBadgeElem.textContent = '2P';
+      resetGame();
+    });
+
+    aiLvlButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        aiLvlButtons.forEach(b => {
+          b.className = 'ai-lvl-btn px-2.5 py-1 rounded-md font-bold transition-colors text-slate-400 hover:text-slate-200';
+        });
+        btn.className = 'ai-lvl-btn px-2.5 py-1 rounded-md font-bold transition-colors bg-emerald-600 text-white shadow';
+        aiDifficulty = parseInt(btn.dataset.level, 10);
+      });
+    });
+
+    // 起動時の初期化
+    window.addEventListener('load', () => {
+      initBoard();
+    });
+  </script>
+</body>
+</html>
